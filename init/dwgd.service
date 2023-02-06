@@ -1,0 +1,11 @@
+[Unit]
+Description=dwgd
+Before=docker.service
+After=network.target dwgd.socket
+Requires=dwgd.socket docker.service
+
+[Service]
+ExecStart=/usr/bin/dwgd -d /var/lib/dwgd.db
+
+[Install]
+WantedBy=multi-user.target
