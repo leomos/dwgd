@@ -1,0 +1,58 @@
+name: Build dwgd binary
+
+on:
+  push:
+    tags:
+      - "v[0-9]+\.[0-9]+\.[0-9]+"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    name: Build binary
+    strategy:
+      matrix:
+        goos: [linux]
+        goarch: [arm64, amd64]
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Setup Go
+      uses: actions/setup-go@v2
+      with:
+        go-version: latest
+
+    - name: Build binary
+      run: |
+        go build -ldflags "-X main.Version=${{ env.TAG_NAME }}" -o bin/dwgd-${{ env.TAG_NAME }}-${{ env.goos }}-${{ env.goarch }} cmd/dwgd.go
+
+    - name: Create archive
+      run: |
+        tar -czvf bin/dwgd-${{ env.TAG_NAME }}-${{ env.goos }}-${{ env.goarch }}.tar.gz bin/dwgd-${{ env.TAG_NAME }}-${{ env.goos }}-${{ env.goarch }}
+
+    - name: Upload archive
+      uses: actions/upload-artifact@v1
+      with:
+        name: dwgd-${{ env.TAG_NAME }}-${{ env.goos }}-${{ env.goarch }}.tar.gz
+        path: bin/dwgd-${{ env.TAG_NAME }}-${{ env.goos }}-${{ env.goarch }}.tar.gz
+
+  release:
+    runs-on: ubuntu-latest
+    needs: build
+    name: Release artifact
+    steps:
+    - name: Create Release
+      uses: actions/create-release@v1
+      with:
+        tag_name: ${{ env.TAG_NAME }}
+        release_name: Release ${{ env.TAG_NAME }}
+        draft: false
+        prerelease: false
+    - name: Upload artifact
+      uses: actions/upload-release-asset@v1
+      with:
+        upload_url: ${{ env.UPLOAD_URL }}
+        asset_path: bin/dwgd-${{ env.TAG_NAME }}-${{ env.goos }}-${{ env.goarch }}.tar.gz
+        asset_name: dwgd-${{ env.TAG_NAME }}-${{ env.goos }}-${{ env.goarch }}.tar.gz
+        asset_content_type: application/gzip
