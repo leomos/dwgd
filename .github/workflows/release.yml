@@ -17,6 +17,8 @@ jobs:
       GOOS:   ${{ matrix.os }}
       GOARCH: ${{ matrix.arch }}
       TAG:    ${{ github.ref_name }}
+    outputs:
+      release_id: ${{ steps.create_release.outputs.id }}
 
     steps:
     - name: Checkout code
@@ -42,7 +44,7 @@ jobs:
         name: dwgd-${{ env.TAG }}-${{ env.GOOS }}-${{ env.GOARCH }}.tar.gz
         path: bin/dwgd-${{ env.TAG }}-${{ env.GOOS }}-${{ env.GOARCH }}.tar.gz
 
-    - name: Create Draft Release
+    - name: Create draft release
       id: create_release
       uses: actions/create-release@v1
       env:
@@ -60,10 +62,15 @@ jobs:
         upload_url: ${{ steps.create_release.outputs.upload_url }}
         asset_path: bin/dwgd-${{ env.TAG }}-${{ env.GOOS }}-${{ env.GOARCH }}.tar.gz
         asset_name: dwgd-${{ env.TAG }}-${{ env.GOOS }}-${{ env.GOARCH }}.tar.gz
-        asset_content_type: application/zip
+        asset_content_type: application/gzip
 
+  release:
+    runs-on: ubuntu-latest
+    name: Publish release
+
+    steps:
     - uses: eregon/publish-release@v1
       env:
         GITHUB_TOKEN: ${{ github.token }}
       with:
-        release_id: ${{ steps.create_release.outputs.id }}
+        release_id: ${{ needs.build.outputs.release_id }}
