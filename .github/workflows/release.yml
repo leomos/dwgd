@@ -37,7 +37,7 @@ jobs:
 
     - name: Build binary
       run: |
-        go build -ldflags "-X main.Version=${{ env.TAG }}" -o dwgd cmd/dwgd.go
+        CGO_ENABLED=1 go build -buildmode=pie -tags 'osusergo,netgo,static,' -ldflags '-linkmode=external -extldflags "-static-pie" -X main.Version=${{ env.TAG }}' -o dwgd cmd/dwgd.go
 
     - name: Create archive
       run: |
