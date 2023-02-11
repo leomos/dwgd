@@ -29,6 +29,11 @@ jobs:
       with:
           go-version-file: 'go.mod'
           cache: true 
+    
+    - id: release
+      uses: bruceadams/get-release@v1.2.3
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
 
     - name: Build binary
       run: |
@@ -44,33 +49,12 @@ jobs:
         name: dwgd-${{ env.TAG }}-${{ env.GOOS }}-${{ env.GOARCH }}.tar.gz
         path: bin/dwgd-${{ env.TAG }}-${{ env.GOOS }}-${{ env.GOARCH }}.tar.gz
 
-    - name: Create draft release
-      id: create_release
-      uses: actions/create-release@v1
+    - name: Upload release tarball
+      uses: actions/upload-release-asset@v1.0.1
       env:
         GITHUB_TOKEN: ${{ github.token }}
       with:
-        tag_name: ${{ env.TAG }}
-        release_name: ${{ env.TAG }}
-        draft: true
-        prerelease: false
-
-    - uses: actions/upload-release-asset@v1.0.1
-      env:
-        GITHUB_TOKEN: ${{ github.token }}
-      with:
-        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        upload_url: ${{ steps.release.outputs.upload_url }}
         asset_path: bin/dwgd-${{ env.TAG }}-${{ env.GOOS }}-${{ env.GOARCH }}.tar.gz
         asset_name: dwgd-${{ env.TAG }}-${{ env.GOOS }}-${{ env.GOARCH }}.tar.gz
         asset_content_type: application/gzip
-
-  release:
-    runs-on: ubuntu-latest
-    name: Publish release
-
-    steps:
-    - uses: eregon/publish-release@v1
-      env:
-        GITHUB_TOKEN: ${{ github.token }}
-      with:
-        release_id: ${{ needs.build.outputs.release_id }}
