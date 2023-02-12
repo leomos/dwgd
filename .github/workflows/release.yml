@@ -48,7 +48,7 @@ jobs:
         mkdir -p dist/systemd
         CGO_ENABLED=1 go build -tags 'osusergo,netgo,static,' -ldflags '-linkmode=external -extldflags "-static" -X main.Version=${{ env.TAG }}' -o dist/dwgd cmd/dwgd.go
         cp init/* dist/systemd/
-        tar -czvf dwgd-${{ env.TAG }}-${{ env.GOOS }}-${{ env.GOARCH }}.tar.gz dist/*
+        tar -czvf dwgd-${{ env.TAG }}-${{ env.GOOS }}-${{ env.GOARCH }}.tar.gz -C dist .
  
     - name: Upload release tarball
       uses: actions/upload-release-asset@v1.0.1
