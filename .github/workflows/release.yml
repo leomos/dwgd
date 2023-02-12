@@ -1,4 +1,4 @@
-name: Build dwgd binary
+name: Release dwgd
 
 on:
   push:
@@ -6,19 +6,22 @@ on:
       - "v[0-9]+.[0-9]+.[0-9]+"
 
 jobs:
-  build:
+  release:
     runs-on: ubuntu-latest
-    name: Build binary
+    name: Release dwgd tarball
     strategy:
       matrix:
         os: [linux]
-        arch: [arm64, amd64]
+        include:
+          - arch: amd64
+            cc:   gcc
+          - arch: arm64
+            cc:   aarch64-linux-gnu-gcc
     env:
       GOOS:   ${{ matrix.os }}
       GOARCH: ${{ matrix.arch }}
       TAG:    ${{ github.ref_name }}
-    outputs:
-      release_id: ${{ steps.create_release.outputs.id }}
+      CC:     ${{ matrix.cc }}
 
     steps:
     - name: Checkout code
@@ -34,20 +37,20 @@ jobs:
       uses: bruceadams/get-release@v1.3.2
       env:
         GITHUB_TOKEN: ${{ github.token }}
+ 
+    - name: Install cross-compilers
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y gcc-aarch64-linux-gnu gcc-arm-linux-gnueabihf gcc-arm-linux-gnueabi
 
     - name: Build binary
       run: |
-        CGO_ENABLED=1 go build -buildmode=pie -tags 'osusergo,netgo,static,' -ldflags '-linkmode=external -extldflags "-static-pie" -X main.Version=${{ env.TAG }}' -o dwgd cmd/dwgd.go
-
-    - name: Create archive
-      run: |
+        rm -rf dist
+        mkdir -p dist
+        CGO_ENABLED=1 go build -tags 'osusergo,netgo,static,' -ldflags '-linkmode=external -extldflags "-static" -X main.Version=${{ env.TAG }}' -o dist/dwgd cmd/dwgd.go
+        cp init/* dist/
+        cd dist
         tar -czvf dwgd-${{ env.TAG }}-${{ env.GOOS }}-${{ env.GOARCH }}.tar.gz dwgd
-
-    - name: Upload archive
-      uses: actions/upload-artifact@v1
-      with:
-        name: dwgd-${{ env.TAG }}-${{ env.GOOS }}-${{ env.GOARCH }}.tar.gz
-        path: dwgd-${{ env.TAG }}-${{ env.GOOS }}-${{ env.GOARCH }}.tar.gz
 
     - name: Upload release tarball
       uses: actions/upload-release-asset@v1.0.1
@@ -55,6 +58,6 @@ jobs:
         GITHUB_TOKEN: ${{ github.token }}
       with:
         upload_url: ${{ steps.release.outputs.upload_url }}
-        asset_path: dwgd-${{ env.TAG }}-${{ env.GOOS }}-${{ env.GOARCH }}.tar.gz
+        asset_path: ./dist/dwgd-${{ env.TAG }}-${{ env.GOOS }}-${{ env.GOARCH }}.tar.gz
         asset_name: dwgd-${{ env.TAG }}-${{ env.GOOS }}-${{ env.GOARCH }}.tar.gz
         asset_content_type: application/gzip
