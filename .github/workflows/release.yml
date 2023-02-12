@@ -48,6 +48,9 @@ jobs:
         mkdir -p dist/systemd
         CGO_ENABLED=1 go build -tags 'osusergo,netgo,static,' -ldflags '-linkmode=external -extldflags "-static" -X main.Version=${{ env.TAG }}' -o dist/dwgd cmd/dwgd.go
         cp init/* dist/systemd/
+ 
+    - name: Create tarball
+      run: |
         cd dist
         tar -czvf dwgd-${{ env.TAG }}-${{ env.GOOS }}-${{ env.GOARCH }}.tar.gz .
 
