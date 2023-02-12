@@ -48,18 +48,14 @@ jobs:
         mkdir -p dist/systemd
         CGO_ENABLED=1 go build -tags 'osusergo,netgo,static,' -ldflags '-linkmode=external -extldflags "-static" -X main.Version=${{ env.TAG }}' -o dist/dwgd cmd/dwgd.go
         cp init/* dist/systemd/
+        tar -czvf dwgd-${{ env.TAG }}-${{ env.GOOS }}-${{ env.GOARCH }}.tar.gz dist/*
  
-    - name: Create tarball
-      run: |
-        cd dist
-        tar -czvf dwgd-${{ env.TAG }}-${{ env.GOOS }}-${{ env.GOARCH }}.tar.gz .
-
     - name: Upload release tarball
       uses: actions/upload-release-asset@v1.0.1
       env:
         GITHUB_TOKEN: ${{ github.token }}
       with:
         upload_url: ${{ steps.release.outputs.upload_url }}
-        asset_path: ./dist/dwgd-${{ env.TAG }}-${{ env.GOOS }}-${{ env.GOARCH }}.tar.gz
+        asset_path: ./dwgd-${{ env.TAG }}-${{ env.GOOS }}-${{ env.GOARCH }}.tar.gz
         asset_name: dwgd-${{ env.TAG }}-${{ env.GOOS }}-${{ env.GOARCH }}.tar.gz
         asset_content_type: application/gzip
