@@ -11,14 +11,13 @@ jobs:
     name: Release dwgd tarball
     strategy:
       matrix:
-        os: [linux]
         include:
           - arch: amd64
             cc:   gcc
           - arch: arm64
             cc:   aarch64-linux-gnu-gcc
     env:
-      GOOS:   ${{ matrix.os }}
+      GOOS:   linux
       GOARCH: ${{ matrix.arch }}
       TAG:    ${{ github.ref_name }}
       CC:     ${{ matrix.cc }}
