@@ -45,11 +45,11 @@ jobs:
     - name: Build binary
       run: |
         rm -rf dist
-        mkdir -p dist
+        mkdir -p dist/systemd
         CGO_ENABLED=1 go build -tags 'osusergo,netgo,static,' -ldflags '-linkmode=external -extldflags "-static" -X main.Version=${{ env.TAG }}' -o dist/dwgd cmd/dwgd.go
-        cp init/* dist/
+        cp init/* dist/systemd/
         cd dist
-        tar -czvf dwgd-${{ env.TAG }}-${{ env.GOOS }}-${{ env.GOARCH }}.tar.gz dwgd
+        tar -czvf dwgd-${{ env.TAG }}-${{ env.GOOS }}-${{ env.GOARCH }}.tar.gz .
 
     - name: Upload release tarball
       uses: actions/upload-release-asset@v1.0.1
