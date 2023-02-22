@@ -3,7 +3,11 @@ package dwgd
 import (
 	"fmt"
 	"net"
+	"os"
 	"os/exec"
+	"path"
+	"regexp"
+	"strconv"
 
 	"github.com/docker/go-plugins-helpers/network"
 	_ "github.com/mattn/go-sqlite3"
@@ -49,7 +53,7 @@ func (d *Dwgd) Close() error {
 
 func (d *Dwgd) GetCapabilities() (*network.CapabilitiesResponse, error) {
 	TraceLog.Printf("GetCapabilities\n")
-	return &network.CapabilitiesResponse{Scope: network.LocalScope, ConnectivityScope: network.LocalScope}, nil
+	return &network.CapabilitiesResponse{Scope: network.GlobalScope, ConnectivityScope: network.GlobalScope}, nil
 }
 
 func (d *Dwgd) CreateNetwork(r *network.CreateNetworkRequest) error {
@@ -178,6 +182,27 @@ func (d *Dwgd) Join(r *network.JoinRequest) (*network.JoinResponse, error) {
 	err = d.wgc.ConfigureDevice(c.ifname, cfg)
 	if err != nil {
 		return nil, err
+	}
+
+	// rootless namespace
+	re := regexp.MustCompile(`/run/user/\d+/`)
+	match := re.FindString(r.SandboxKey)
+	if match != "" {
+		TraceLog.Printf("Request for a rootless namespace: %+v\n", r.SandboxKey)
+		data, err := os.ReadFile(path.Join(match, "docker.pid"))
+		if err != nil {
+			return nil, err
+		}
+
+		pid, err := strconv.Atoi(string(data))
+		if err != nil {
+			return nil, err
+		}
+
+		cmd := exec.Command("ip", "link", "set", c.ifname, "netns", fmt.Sprint(pid))
+		if err := cmd.Run(); err != nil {
+			return nil, err
+		}
 	}
 
 	return &network.JoinResponse{

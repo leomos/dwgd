@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"dwgd"
 	"flag"
 	"net"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/docker/go-plugins-helpers/network"
 )
@@ -16,6 +18,7 @@ var Version string
 var dbFlag = flag.String("d", "/var/lib/dwgd.db", "dwgd db path")
 var verboseFlag = flag.Bool("v", false, "verbose mode")
 var versionFlag = flag.Bool("version", false, "print the version")
+var rootlessFlag = flag.Bool("r", true, "run in rootless compatibility mode")
 
 var pubkeyCmd = flag.NewFlagSet("pubkey", flag.ExitOnError)
 var ipFlag = pubkeyCmd.String("i", "", "IP to generate public key")
@@ -44,6 +47,41 @@ func pubkey(args []string) {
 	}
 	dwgd.EventsLog.Printf("%s\n", privkey.PublicKey().String())
 	os.Exit(0)
+}
+
+func runDwgd(ctx context.Context, db string) {
+	dwgd.DiagnosticsLog.Printf("Using db: %s\n", db)
+	d, err := dwgd.NewDwgd(db)
+	if err != nil {
+		dwgd.DiagnosticsLog.Fatalf("Couldn't initialize driver: %s\n", err)
+	}
+
+	h := network.NewHandler(d)
+	l, err := dwgd.NewUnixListener(*rootlessFlag)
+	if err != nil {
+		dwgd.DiagnosticsLog.Fatalf("Couldn't serve on unix socket: %s\n", err)
+	}
+
+	go func() {
+		dwgd.DiagnosticsLog.Println("Serving on unix socket")
+		err = h.Serve(l)
+		if err != nil {
+			dwgd.DiagnosticsLog.Printf("Couldn't serve on unix socket: %s\n", err)
+		}
+	}()
+
+	<-ctx.Done()
+	dwgd.DiagnosticsLog.Println("Closing driver")
+	err = d.Close()
+	if err != nil {
+		dwgd.DiagnosticsLog.Printf("Error during driver close: %s\n", err)
+	}
+
+	dwgd.DiagnosticsLog.Println("Closing listener")
+	err = l.Close()
+	if err != nil {
+		dwgd.DiagnosticsLog.Printf("Error during listener close: %s\n", err)
+	}
 }
 
 func main() {
@@ -79,28 +117,13 @@ func main() {
 		os.Exit(0)
 	}
 
-	dwgd.DiagnosticsLog.Printf("Using db: %s\n", db)
-	d, err := dwgd.NewDwgd(db)
-	if err != nil {
-		dwgd.DiagnosticsLog.Fatalf("Couldn't initialize driver: %s\n", err)
-	}
-
-	h := network.NewHandler(d)
-
-	go func() {
-		dwgd.DiagnosticsLog.Println("Serving on unix socket")
-		err = h.ServeUnix("dwgd", 0)
-		if err != nil {
-			dwgd.DiagnosticsLog.Fatalf("Couldn't serve on unix socket: %s\n", err)
-		}
-	}()
+	ctx, cancel := context.WithCancel(context.Background())
+	go runDwgd(ctx, db)
 
 	sig := <-signalCh
 	dwgd.DiagnosticsLog.Printf("Received signal: %s", sig.String())
+	signal.Stop(signalCh)
 
-	dwgd.DiagnosticsLog.Println("Cleaning up driver")
-	err = d.Close()
-	if err != nil {
-		dwgd.DiagnosticsLog.Fatalf("Error during driver cleaning: %s\n", err)
-	}
+	cancel()
+	time.Sleep(time.Second)
 }
