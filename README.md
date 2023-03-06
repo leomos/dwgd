@@ -69,6 +69,8 @@ $ install init/* /etc/systemd/system/
 
 You need to have WireGuard installed on your system and the `iproute2` package: `dwgd` uses the `ip` command to create and delete the WireGuard interfaces.
 
+You will also need the `nsenter` binary if you want `dwgd` to work with docker rootless.
+
 ## Limitations
 
 Currently `dwgd` sets the WireGuard interface as the default route, in the future this issue will be addressed.

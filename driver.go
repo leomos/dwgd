@@ -3,11 +3,7 @@ package dwgd
 import (
 	"fmt"
 	"net"
-	"os"
 	"os/exec"
-	"path"
-	"regexp"
-	"strconv"
 
 	"github.com/docker/go-plugins-helpers/network"
 	_ "github.com/mattn/go-sqlite3"
@@ -16,14 +12,14 @@ import (
 )
 
 // Docker WireGuard Driver
-type Dwgd struct {
+type Driver struct {
 	network.Driver
 
 	wgc *wgctrl.Client
 	s   *Storage
 }
 
-func NewDwgd(dbPath string) (*Dwgd, error) {
+func NewDriver(dbPath string) (*Driver, error) {
 	path, err := exec.LookPath("ip")
 	if err != nil {
 		TraceLog.Printf("Couldn't find 'ip' utility: %s", err)
@@ -41,22 +37,22 @@ func NewDwgd(dbPath string) (*Dwgd, error) {
 		return nil, err
 	}
 
-	return &Dwgd{
+	return &Driver{
 		wgc: wgc,
 		s:   s,
 	}, nil
 }
 
-func (d *Dwgd) Close() error {
+func (d *Driver) Close() error {
 	return d.s.db.Close()
 }
 
-func (d *Dwgd) GetCapabilities() (*network.CapabilitiesResponse, error) {
+func (d *Driver) GetCapabilities() (*network.CapabilitiesResponse, error) {
 	TraceLog.Printf("GetCapabilities\n")
-	return &network.CapabilitiesResponse{Scope: network.GlobalScope, ConnectivityScope: network.GlobalScope}, nil
+	return &network.CapabilitiesResponse{Scope: network.LocalScope, ConnectivityScope: network.LocalScope}, nil
 }
 
-func (d *Dwgd) CreateNetwork(r *network.CreateNetworkRequest) error {
+func (d *Driver) CreateNetwork(r *network.CreateNetworkRequest) error {
 	TraceLog.Printf("CreateNetwork: %+v\n", Jsonify(r))
 	var err error
 
@@ -91,12 +87,12 @@ func (d *Dwgd) CreateNetwork(r *network.CreateNetworkRequest) error {
 	return d.s.AddNetwork(n)
 }
 
-func (d *Dwgd) DeleteNetwork(r *network.DeleteNetworkRequest) error {
+func (d *Driver) DeleteNetwork(r *network.DeleteNetworkRequest) error {
 	TraceLog.Printf("DeleteNetwork: %+v\n", Jsonify(r))
 	return d.s.RemoveNetwork(r.NetworkID)
 }
 
-func (d *Dwgd) CreateEndpoint(r *network.CreateEndpointRequest) (*network.CreateEndpointResponse, error) {
+func (d *Driver) CreateEndpoint(r *network.CreateEndpointRequest) (*network.CreateEndpointResponse, error) {
 	TraceLog.Printf("CreateEndpoint: %+v\n", Jsonify(r))
 
 	n, err := d.s.GetNetwork(r.NetworkID)
@@ -135,7 +131,7 @@ func (d *Dwgd) CreateEndpoint(r *network.CreateEndpointRequest) (*network.Create
 	return &network.CreateEndpointResponse{}, nil
 }
 
-func (d *Dwgd) DeleteEndpoint(r *network.DeleteEndpointRequest) error {
+func (d *Driver) DeleteEndpoint(r *network.DeleteEndpointRequest) error {
 	TraceLog.Printf("DeleteEndpoint: %+v\n", Jsonify(r))
 	c, err := d.s.GetClient(r.EndpointID)
 	if err != nil {
@@ -153,12 +149,12 @@ func (d *Dwgd) DeleteEndpoint(r *network.DeleteEndpointRequest) error {
 	return d.s.RemoveClient(r.EndpointID)
 }
 
-func (d *Dwgd) EndpointInfo(r *network.InfoRequest) (*network.InfoResponse, error) {
+func (d *Driver) EndpointInfo(r *network.InfoRequest) (*network.InfoResponse, error) {
 	TraceLog.Printf("EndpointInfo: %+v\n", Jsonify(r))
 	return &network.InfoResponse{Value: make(map[string]string)}, nil
 }
 
-func (d *Dwgd) Join(r *network.JoinRequest) (*network.JoinResponse, error) {
+func (d *Driver) Join(r *network.JoinRequest) (*network.JoinResponse, error) {
 	TraceLog.Printf("Join: %+v\n", Jsonify(r))
 
 	c, err := d.s.GetClient(r.EndpointID)
@@ -184,26 +180,7 @@ func (d *Dwgd) Join(r *network.JoinRequest) (*network.JoinResponse, error) {
 		return nil, err
 	}
 
-	// rootless namespace
-	re := regexp.MustCompile(`/run/user/\d+/`)
-	match := re.FindString(r.SandboxKey)
-	if match != "" {
-		TraceLog.Printf("Request for a rootless namespace: %+v\n", r.SandboxKey)
-		data, err := os.ReadFile(path.Join(match, "docker.pid"))
-		if err != nil {
-			return nil, err
-		}
-
-		pid, err := strconv.Atoi(string(data))
-		if err != nil {
-			return nil, err
-		}
-
-		cmd := exec.Command("ip", "link", "set", c.ifname, "netns", fmt.Sprint(pid))
-		if err := cmd.Run(); err != nil {
-			return nil, err
-		}
-	}
+	moveToRootlessNamespaceIfNecessary(r.SandboxKey, c.ifname)
 
 	return &network.JoinResponse{
 		InterfaceName: network.InterfaceName{
@@ -218,7 +195,7 @@ func (d *Dwgd) Join(r *network.JoinRequest) (*network.JoinResponse, error) {
 	}, nil
 }
 
-func (d *Dwgd) Leave(r *network.LeaveRequest) error {
+func (d *Driver) Leave(r *network.LeaveRequest) error {
 	TraceLog.Printf("Leave: %+v\n", Jsonify(r))
 
 	c, err := d.s.GetClient(r.EndpointID)

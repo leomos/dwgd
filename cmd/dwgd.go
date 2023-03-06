@@ -1,24 +1,25 @@
 package main
 
 import (
-	"context"
 	"dwgd"
 	"flag"
 	"net"
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
-
-	"github.com/docker/go-plugins-helpers/network"
 )
 
 var Version string
 
-var dbFlag = flag.String("d", "/var/lib/dwgd.db", "dwgd db path")
-var verboseFlag = flag.Bool("v", false, "verbose mode")
+var cfg = dwgd.NewConfig()
+
+func init() {
+	flag.StringVar(&cfg.Db, "d", cfg.Db, "dwgd db path")
+	flag.BoolVar(&cfg.Verbose, "v", cfg.Verbose, "verbose mode")
+	flag.BoolVar(&cfg.Rootless, "r", cfg.Rootless, "run in rootless compatibility mode")
+}
+
 var versionFlag = flag.Bool("version", false, "print the version")
-var rootlessFlag = flag.Bool("r", true, "run in rootless compatibility mode")
 
 var pubkeyCmd = flag.NewFlagSet("pubkey", flag.ExitOnError)
 var ipFlag = pubkeyCmd.String("i", "", "IP to generate public key")
@@ -49,41 +50,6 @@ func pubkey(args []string) {
 	os.Exit(0)
 }
 
-func runDwgd(ctx context.Context, db string) {
-	dwgd.DiagnosticsLog.Printf("Using db: %s\n", db)
-	d, err := dwgd.NewDwgd(db)
-	if err != nil {
-		dwgd.DiagnosticsLog.Fatalf("Couldn't initialize driver: %s\n", err)
-	}
-
-	h := network.NewHandler(d)
-	l, err := dwgd.NewUnixListener(*rootlessFlag)
-	if err != nil {
-		dwgd.DiagnosticsLog.Fatalf("Couldn't serve on unix socket: %s\n", err)
-	}
-
-	go func() {
-		dwgd.DiagnosticsLog.Println("Serving on unix socket")
-		err = h.Serve(l)
-		if err != nil {
-			dwgd.DiagnosticsLog.Printf("Couldn't serve on unix socket: %s\n", err)
-		}
-	}()
-
-	<-ctx.Done()
-	dwgd.DiagnosticsLog.Println("Closing driver")
-	err = d.Close()
-	if err != nil {
-		dwgd.DiagnosticsLog.Printf("Error during driver close: %s\n", err)
-	}
-
-	dwgd.DiagnosticsLog.Println("Closing listener")
-	err = l.Close()
-	if err != nil {
-		dwgd.DiagnosticsLog.Printf("Error during listener close: %s\n", err)
-	}
-}
-
 func main() {
 	if len(os.Args) >= 2 {
 		switch os.Args[1] {
@@ -97,13 +63,11 @@ func main() {
 
 	flag.Parse()
 
-	db := *dbFlag
-	if db == "" {
-		db = ":memory:"
+	if cfg.Db == "" {
+		cfg.Db = ":memory:"
 	}
 
-	verbose := *verboseFlag
-	if verbose {
+	if cfg.Verbose {
 		dwgd.TraceLog.SetOutput(os.Stderr)
 	}
 
@@ -117,13 +81,22 @@ func main() {
 		os.Exit(0)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	go runDwgd(ctx, db)
+	dwgd.TraceLog.Printf("Running with the following configuration: %+v\n", cfg)
+	plugin, err := dwgd.NewDwgd(cfg)
+	if err != nil {
+		dwgd.DiagnosticsLog.Fatalf("Couldn't initialize plugin: %s\n", err)
+	}
+	err = plugin.Start()
+	if err != nil {
+		dwgd.DiagnosticsLog.Fatalf("Couldn't start plugin: %s\n", err)
+	}
 
 	sig := <-signalCh
 	dwgd.DiagnosticsLog.Printf("Received signal: %s", sig.String())
 	signal.Stop(signalCh)
 
-	cancel()
-	time.Sleep(time.Second)
+	err = plugin.Stop()
+	if err != nil {
+		dwgd.DiagnosticsLog.Printf("Couldn't stop plugin: %s\n", err)
+	}
 }
