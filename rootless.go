@@ -34,9 +34,7 @@ func moveToRootlessNamespace(pid int, ifname string) error {
 }
 
 func moveToRootlessNamespaceIfNecessary(sandboxKey string, ifname string) error {
-	fmt.Printf("sandboxKey: %s\nifname: %s\n", sandboxKey, ifname)
 	match := userXdgRuntimeDirRegex.FindString(sandboxKey)
-	fmt.Printf("match: %s\n", match)
 	if match != "" {
 		data, err := os.ReadFile(path.Join(match, dockerPidFileName))
 		if err != nil {
