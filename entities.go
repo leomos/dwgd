@@ -17,6 +17,7 @@ type Network struct {
 	endpoint *net.UDPAddr
 	seed     []byte
 	pubkey   wgtypes.Key
+	route    string
 }
 
 func (n *Network) PeerConfig() wgtypes.PeerConfig {
@@ -83,7 +84,8 @@ CREATE TABLE IF NOT EXISTS network (
     id TEXT PRIMARY KEY,
     endpoint TEXT,
     seed BLOB,
-    pubkey BLOB[32]
+    pubkey BLOB[32],
+	route TEXT
 );
 
 CREATE TABLE IF NOT EXISTS client (
@@ -117,13 +119,13 @@ func NewStorage(path string) (*Storage, error) {
 }
 
 func (s *Storage) AddNetwork(n *Network) error {
-	stm, err := s.db.Prepare("INSERT INTO network(id, endpoint, seed, pubkey) VALUES(?, ?, ?, ?)")
+	stm, err := s.db.Prepare("INSERT INTO network(id, endpoint, seed, pubkey, route) VALUES(?, ?, ?, ?, ?)")
 	if err != nil {
 		return err
 	}
 	defer stm.Close()
 
-	r, err := stm.Exec(n.id, n.endpoint.String(), n.seed, n.pubkey[:])
+	r, err := stm.Exec(n.id, n.endpoint.String(), n.seed, n.pubkey[:], n.route)
 	if err != nil {
 		return err
 	}
@@ -163,7 +165,7 @@ func (s *Storage) RemoveNetwork(id string) error {
 }
 
 func (s *Storage) GetNetwork(id string) (*Network, error) {
-	stmt, err := s.db.Prepare("SELECT id, endpoint, seed, pubkey FROM network WHERE id = ?")
+	stmt, err := s.db.Prepare("SELECT id, endpoint, seed, pubkey, route FROM network WHERE id = ?")
 	if err != nil {
 		return nil, err
 	}
@@ -173,7 +175,7 @@ func (s *Storage) GetNetwork(id string) (*Network, error) {
 	var endpoint string
 	var pubkey []byte
 
-	err = stmt.QueryRow(id).Scan(&n.id, &endpoint, &n.seed, &pubkey)
+	err = stmt.QueryRow(id).Scan(&n.id, &endpoint, &n.seed, &pubkey, &n.route)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -247,7 +249,8 @@ SELECT
 	client.ifname,
 	network.endpoint,
 	network.seed,
-	network.pubkey
+	network.pubkey,
+	network.route
 FROM 
 	client 
 INNER JOIN network
@@ -266,7 +269,7 @@ WHERE client.id = ?
 	var endpoint string
 	var ip string
 	var pubkey []byte
-	err = stmt.QueryRow(id).Scan(&c.id, &c.network.id, &ip, &c.ifname, &endpoint, &c.network.seed, &pubkey)
+	err = stmt.QueryRow(id).Scan(&c.id, &c.network.id, &ip, &c.ifname, &endpoint, &c.network.seed, &pubkey, &c.network.route)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}

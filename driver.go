@@ -83,6 +83,12 @@ func (d *Driver) CreateNetwork(r *network.CreateNetworkRequest) error {
 		return err
 	}
 
+	route, ok := m["dwgd.route"].(string)
+	if !ok {
+		route = ""
+	}
+	n.route = route
+
 	n.id = r.NetworkID
 	return d.s.AddNetwork(n)
 }
@@ -182,15 +188,20 @@ func (d *Driver) Join(r *network.JoinRequest) (*network.JoinResponse, error) {
 
 	moveToRootlessNamespaceIfNecessary(r.SandboxKey, c.ifname)
 
+	staticRoutes := make([]*network.StaticRoute, 0)
+	if c.network.route != "" {
+		staticRoutes = append(staticRoutes, &network.StaticRoute{
+			Destination: c.network.route,
+			RouteType:   1,
+		})
+	}
+
 	return &network.JoinResponse{
 		InterfaceName: network.InterfaceName{
 			SrcName:   c.ifname,
 			DstPrefix: "wg",
 		},
-		StaticRoutes: []*network.StaticRoute{{
-			Destination: "0.0.0.0/0",
-			RouteType:   1,
-		}},
+		StaticRoutes:          staticRoutes,
 		DisableGatewayService: true,
 	}, nil
 }
