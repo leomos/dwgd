@@ -5,6 +5,14 @@ This is achieved by [moving a WireGuard network interface](https://www.wireguard
 
 **Credits**: this is a rewrite of the proof of concept presented in [this great article](https://www.bestov.io/blog/using-wireguard-as-the-network-for-a-docker-container).
 
+### Disclaimer
+
+This software is by no means ready for production.
+I use it in personal projects, but it has not been tested anywhere else other than my machine (as far as I know).
+Use it at your own (high) risk.
+
+Also it misses tests and documentation...eventually I'll write them, I swear.
+
 ## Usage
 
 Generate the public key given your seed and the IP address that your container will have:
