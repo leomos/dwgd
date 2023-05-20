@@ -51,7 +51,7 @@ func moveToRootlessNamespaceIfNecessary(sandboxKey string, ifname string) error 
 	return nil
 }
 
-// returns (pid, socket path, errror)
+// returns (pid, socket path, error)
 func generateSockSymlinkFromDockerPidFile(dockerPidFileFullPath string) (int, string, error) {
 	data, err := os.ReadFile(dockerPidFileFullPath)
 	if err != nil {
@@ -127,7 +127,7 @@ func (r *RootlessSymlinker) handleEvent(ev gonotify.InotifyEvent) {
 func (r *RootlessSymlinker) Start() error {
 	// We create a context to handle inotify's lifecyle.
 	// When the symlinker is stopped we want to stop
-	// cleanly also the inotofy instance.
+	// cleanly also the inotify instance.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 

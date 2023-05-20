@@ -24,8 +24,7 @@ func (n *Network) PeerConfig() wgtypes.PeerConfig {
 	keepalive := 25 * time.Second
 
 	_, ipnet, _ := net.ParseCIDR("0.0.0.0/0")
-	allowedIPs := make([]net.IPNet, 1)
-	allowedIPs[0] = *ipnet
+	allowedIPs := []net.IPNet{*ipnet}
 
 	return wgtypes.PeerConfig{
 		Endpoint:                    n.endpoint,

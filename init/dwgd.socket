@@ -1,8 +1,0 @@
-[Unit]
-Description=dwgd
-
-[Socket]
-ListenStream=/run/docker/plugins/dwgd.sock
-
-[Install]
-WantedBy=sockets.target
