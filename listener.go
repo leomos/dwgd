@@ -43,6 +43,10 @@ func NewUnixListener() (net.Listener, error) {
 		return nil, err
 	}
 
+	if err := os.MkdirAll(dockerPluginSockDir, 0777); err != nil {
+		return nil, err
+	}
+
 	fullDwgdSockPath := path.Join(dwgdRunDir, dwgdSockName)
 	listener, err := sockets.NewUnixSocket(fullDwgdSockPath, 0)
 	if err != nil {
