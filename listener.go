@@ -43,7 +43,7 @@ func NewUnixListener() (net.Listener, error) {
 		return nil, err
 	}
 
-	if err := os.MkdirAll(dockerPluginSockDir, 0777); err != nil {
+	if err := os.MkdirAll(dockerPluginSockDir, 0755); err != nil {
 		return nil, err
 	}
 
