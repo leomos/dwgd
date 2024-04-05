@@ -1,12 +1,13 @@
 package main
 
 import (
-	"dwgd"
 	"flag"
 	"net"
 	"os"
 	"os/signal"
 	"syscall"
+
+	"github.com/leomos/dwgd"
 )
 
 var Version string
@@ -41,11 +42,8 @@ func pubkey(args []string) {
 		os.Exit(1)
 	}
 
-	privkey, err := dwgd.GeneratePrivateKey([]byte(seed), net.ParseIP(ip))
-	if err != nil {
-		dwgd.EventsLog.Printf("Couldn't generate key: %s\n", err)
-		os.Exit(1)
-	}
+	privkey := dwgd.GeneratePrivateKey([]byte(seed), net.ParseIP(ip))
+
 	dwgd.EventsLog.Printf("%s\n", privkey.PublicKey().String())
 	os.Exit(0)
 }

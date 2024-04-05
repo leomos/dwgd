@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"os"
-	"os/exec"
 	"path"
 	"regexp"
 	"strconv"
@@ -23,37 +21,33 @@ var (
 	userXdgRuntimeDirRegex = regexp.MustCompile(xdgRuntimeRoot + `\d+`)
 )
 
-func moveToRootlessNamespace(pid int, ifname string) error {
+func moveToRootlessNamespaceIfNecessary(c commander, sandboxKey string, ifname string) error {
+	match := userXdgRuntimeDirRegex.FindString(sandboxKey)
+	if match == "" {
+		return nil
+	}
+
+	data, err := c.ReadFile(path.Join(match, dockerPidFileName))
+	if err != nil {
+		return err
+	}
+
+	pid, err := strconv.Atoi(string(data))
+	if err != nil {
+		return err
+	}
+
 	TraceLog.Printf("Moving %s to rootless namespace with PID %d\n", ifname, pid)
-	cmd := exec.Command("ip", "link", "set", ifname, "netns", fmt.Sprint(pid))
-	if err := cmd.Run(); err != nil {
+	if err := c.Run("ip", "link", "set", ifname, "netns", fmt.Sprint(pid)); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func moveToRootlessNamespaceIfNecessary(sandboxKey string, ifname string) error {
-	match := userXdgRuntimeDirRegex.FindString(sandboxKey)
-	if match != "" {
-		data, err := os.ReadFile(path.Join(match, dockerPidFileName))
-		if err != nil {
-			return err
-		}
-
-		pid, err := strconv.Atoi(string(data))
-		if err != nil {
-			return err
-		}
-		moveToRootlessNamespace(pid, ifname)
-	}
-
-	return nil
-}
-
 // returns (pid, socket path, error)
-func generateSockSymlinkFromDockerPidFile(dockerPidFileFullPath string) (int, string, error) {
-	data, err := os.ReadFile(dockerPidFileFullPath)
+func generateSockSymlinkFromDockerPidFile(c commander, dockerPidFileFullPath string) (int, string, error) {
+	data, err := c.ReadFile(dockerPidFileFullPath)
 	if err != nil {
 		return 0, "", err
 	}
@@ -65,8 +59,7 @@ func generateSockSymlinkFromDockerPidFile(dockerPidFileFullPath string) (int, st
 
 	fullDwgdSockPath := path.Join(dwgdRunDir, dwgdSockName)
 	dockerPluginSockPath := path.Join(dockerPluginSockDir, dwgdSockName)
-	cmd := exec.Command("nsenter", "-U", "-n", "-m", "-t", fmt.Sprint(pid), "ln", "-s", "-f", fullDwgdSockPath, dockerPluginSockPath)
-	if err := cmd.Run(); err != nil {
+	if err := c.Run("nsenter", "-U", "-n", "-m", "-t", fmt.Sprint(pid), "ln", "-s", "-f", fullDwgdSockPath, dockerPluginSockPath); err != nil {
 		TraceLog.Printf("Couldn't create symlink on rootless ns (PID: %d): %s\n", pid, err)
 		return 0, "", err
 	}
@@ -76,13 +69,18 @@ func generateSockSymlinkFromDockerPidFile(dockerPidFileFullPath string) (int, st
 }
 
 type RootlessSymlinker struct {
+	c                  commander
 	socketSymlinkPerNs map[int]string
 	stopCh             chan int
 	inotify            *gonotify.Inotify
 }
 
-func NewRootlessSymlinker() (*RootlessSymlinker, error) {
-	path, err := exec.LookPath("nsenter")
+func NewRootlessSymlinker(c commander) (*RootlessSymlinker, error) {
+	if c == nil {
+		c = &execCommander{}
+	}
+
+	path, err := c.LookPath("nsenter")
 	if err != nil {
 		TraceLog.Printf("Couldn't find 'nsenter' utility: %s", err)
 		return nil, err
@@ -91,6 +89,7 @@ func NewRootlessSymlinker() (*RootlessSymlinker, error) {
 	}
 
 	return &RootlessSymlinker{
+		c:                  c,
 		socketSymlinkPerNs: make(map[int]string),
 		stopCh:             make(chan int),
 	}, nil
@@ -110,7 +109,7 @@ func (r *RootlessSymlinker) handleEvent(ev gonotify.InotifyEvent) {
 		TraceLog.Printf("Creating symlink from %s\n", ev.Name)
 		retries := 5
 		for i := 0; i < retries; i++ {
-			pid, sockPath, err := generateSockSymlinkFromDockerPidFile(ev.Name)
+			pid, sockPath, err := generateSockSymlinkFromDockerPidFile(r.c, ev.Name)
 			if err == nil {
 				r.socketSymlinkPerNs[pid] = sockPath
 				return
@@ -140,7 +139,7 @@ func (r *RootlessSymlinker) Start() error {
 	// Before starting watching for events we list all the folders
 	// in the xdgRuntimeRoot: if there already are some instances
 	// of docker rootless running we can handle those
-	entries, err := os.ReadDir(xdgRuntimeRoot)
+	entries, err := r.c.ReadDir(xdgRuntimeRoot)
 	if err != nil {
 		return err
 	}
@@ -164,7 +163,7 @@ func (r *RootlessSymlinker) Start() error {
 
 		// We also search for a <dockerPidFileName> file
 		// inside the directory and handle a constructed event.
-		subEntries, err := os.ReadDir(fullPath)
+		subEntries, err := r.c.ReadDir(fullPath)
 		if err != nil {
 			return err
 		}
@@ -212,8 +211,7 @@ func (r *RootlessSymlinker) Stop() error {
 	close(r.stopCh)
 
 	for pid, path := range r.socketSymlinkPerNs {
-		cmd := exec.Command("nsenter", "-U", "-n", "-m", "-t", fmt.Sprint(pid), "rm", "-f", path)
-		if err := cmd.Run(); err != nil {
+		if err := r.c.Run("nsenter", "-U", "-n", "-m", "-t", fmt.Sprint(pid), "rm", "-f", path); err != nil {
 			TraceLog.Printf("Couldn't remove symlink on rootless ns (PID: %d): %s\n", pid, err)
 			continue
 		}

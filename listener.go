@@ -2,7 +2,6 @@ package dwgd
 
 import (
 	"net"
-	"os"
 	"path"
 
 	"github.com/docker/go-connections/sockets"
@@ -16,6 +15,7 @@ const (
 
 type UnixListener struct {
 	sock net.Listener
+	c    commander
 }
 
 func (u *UnixListener) Accept() (net.Conn, error) {
@@ -28,8 +28,8 @@ func (u *UnixListener) Close() error {
 		return err
 	}
 
-	os.Remove(path.Join(dockerPluginSockDir, dwgdSockName))
-	os.Remove(path.Join(dwgdRunDir, dwgdSockName))
+	u.c.Remove(path.Join(dockerPluginSockDir, dwgdSockName))
+	u.c.Remove(path.Join(dwgdRunDir, dwgdSockName))
 
 	return nil
 }
@@ -38,12 +38,16 @@ func (u *UnixListener) Addr() net.Addr {
 	return u.sock.Addr()
 }
 
-func NewUnixListener() (net.Listener, error) {
-	if err := os.MkdirAll(dwgdRunDir, 0777); err != nil {
+func NewUnixListener(c commander) (net.Listener, error) {
+	if c == nil {
+		c = &execCommander{}
+	}
+
+	if err := c.MkdirAll(dwgdRunDir, 0777); err != nil {
 		return nil, err
 	}
 
-	if err := os.MkdirAll(dockerPluginSockDir, 0755); err != nil {
+	if err := c.MkdirAll(dockerPluginSockDir, 0755); err != nil {
 		return nil, err
 	}
 
@@ -52,17 +56,18 @@ func NewUnixListener() (net.Listener, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := os.Chmod(fullDwgdSockPath, 0777); err != nil {
+	if err := c.Chmod(fullDwgdSockPath, 0777); err != nil {
 		return nil, err
 	}
 
 	dockerPluginSockPath := path.Join(dockerPluginSockDir, dwgdSockName)
-	err = os.Symlink(fullDwgdSockPath, dockerPluginSockPath)
+	err = c.Symlink(fullDwgdSockPath, dockerPluginSockPath)
 	if err != nil {
 		return nil, err
 	}
 
 	return &UnixListener{
 		sock: listener,
+		c:    c,
 	}, nil
 }

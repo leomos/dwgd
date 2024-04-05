@@ -3,10 +3,12 @@ package dwgd
 import (
 	"crypto/sha256"
 	"database/sql"
-	_ "embed"
+	"embed"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net"
+	"sort"
 	"time"
 
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
@@ -18,6 +20,7 @@ type Network struct {
 	seed     []byte
 	pubkey   wgtypes.Key
 	route    string
+	ifname   string
 }
 
 func (n *Network) PeerConfig() wgtypes.PeerConfig {
@@ -42,11 +45,8 @@ type Client struct {
 	network *Network
 }
 
-func (c *Client) Config() (wgtypes.Config, error) {
-	privkey, err := GeneratePrivateKey(c.network.seed, c.ip)
-	if err != nil {
-		return wgtypes.Config{}, err
-	}
+func (c *Client) Config() wgtypes.Config {
+	privkey := GeneratePrivateKey(c.network.seed, c.ip)
 
 	peers := make([]wgtypes.PeerConfig, 1)
 	peers[0] = c.network.PeerConfig()
@@ -54,18 +54,40 @@ func (c *Client) Config() (wgtypes.Config, error) {
 	return wgtypes.Config{
 		PrivateKey: privkey,
 		Peers:      peers,
-	}, nil
+	}
 }
 
-func GeneratePrivateKey(seed []byte, ip net.IP) (*wgtypes.Key, error) {
+func (c *Client) PeerConfig() wgtypes.PeerConfig {
+	keepalive := 25 * time.Second
+
+	ipnet := net.IPNet{
+		IP:   c.ip,
+		Mask: []byte{255, 255, 255, 255},
+	}
+	allowedIPs := []net.IPNet{ipnet}
+
+	privkey := GeneratePrivateKey(c.network.seed, c.ip)
+
+	return wgtypes.PeerConfig{
+		PublicKey:                   privkey.PublicKey(),
+		Remove:                      false,
+		UpdateOnly:                  false,
+		PresharedKey:                nil,
+		Endpoint:                    nil,
+		PersistentKeepaliveInterval: &keepalive,
+		ReplaceAllowedIPs:           true,
+		AllowedIPs:                  allowedIPs,
+	}
+}
+
+func GeneratePrivateKey(seed []byte, ip net.IP) *wgtypes.Key {
 	h := sha256.New()
 	h.Write(seed)
 	h.Write(ip)
 
-	priv, err := wgtypes.NewKey(h.Sum(nil))
-	if err != nil {
-		return nil, err
-	}
+	// since the size of a SHA256 checksum is 32 bytes by default,
+	// wgtypes.NewKey cannot return error
+	priv, _ := wgtypes.NewKey(h.Sum(nil))
 
 	// Modify random bytes using algorithm described at:
 	// https://cr.yp.to/ecdh.html.
@@ -73,58 +95,116 @@ func GeneratePrivateKey(seed []byte, ip net.IP) (*wgtypes.Key, error) {
 	priv[31] &= 127
 	priv[31] |= 64
 
-	return &priv, nil
+	return &priv
 }
-
-var initSql string = `
-PRAGMA foreign_keys = ON;
-
-CREATE TABLE IF NOT EXISTS network (
-    id TEXT PRIMARY KEY,
-    endpoint TEXT,
-    seed BLOB,
-    pubkey BLOB[32],
-	route TEXT
-);
-
-CREATE TABLE IF NOT EXISTS client (
-    id TEXT PRIMARY KEY,
-    network_id TEXT,
-    ip TEXT,
-    ifname TEXT,
-
-    FOREIGN KEY(network_id) REFERENCES network(id) ON DELETE CASCADE
-);
-`
 
 type Storage struct {
 	db *sql.DB
 }
 
-func NewStorage(path string) (*Storage, error) {
+func (s *Storage) Open(path string) error {
 	db, err := sql.Open("sqlite3", path)
 	if err != nil {
-		return nil, err
+		return err
+	}
+	s.db = db
+
+	// Enable foreign key checks.
+	if _, err := db.Exec(`PRAGMA foreign_keys = ON;`); err != nil {
+		return fmt.Errorf("foreign keys pragma: %w", err)
 	}
 
-	_, err = db.Exec(initSql)
+	if err := s.migrate(); err != nil {
+		return fmt.Errorf("migrate: %w", err)
+	}
+
+	return err
+}
+
+func (s *Storage) Close() error {
+	return s.db.Close()
+}
+
+//go:embed migrations/*.sql
+var migrationFS embed.FS
+
+// migrate sets up migration tracking and executes pending migration files.
+//
+// Migration files are embedded in the sqlite/migration folder and are executed
+// in lexigraphical order.
+//
+// Once a migration is run, its name is stored in the 'migrations' table so it
+// is not re-executed. Migrations run in a transaction to prevent partial
+// migrations.
+func (s *Storage) migrate() error {
+	// Ensure the 'migrations' table exists so we don't duplicate migrations.
+	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS migrations (name TEXT PRIMARY KEY);`); err != nil {
+		return fmt.Errorf("cannot create migrations table: %w", err)
+	}
+
+	// Read migration files from our embedded file system.
+	// This uses Go 1.16's 'embed' package.
+	names, err := fs.Glob(migrationFS, "migrations/*.sql")
 	if err != nil {
-		return nil, err
+		return err
+	}
+	sort.Strings(names)
+
+	// Loop over all migration files and execute them in order.
+	for _, name := range names {
+		if err := s.migrateFile(name); err != nil {
+			return fmt.Errorf("migration error: name=%q err=%w", name, err)
+		}
+	}
+	return nil
+}
+
+// migrate runs a single migration file within a transaction. On success, the
+// migration file name is saved to the "migrations" table to prevent re-running.
+func (s *Storage) migrateFile(name string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// Ensure migration has not already been run.
+	var n int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM migrations WHERE name = ?`, name).Scan(&n); err != nil {
+		return err
+	} else if n != 0 {
+		return nil // already run migration, skip
 	}
 
-	return &Storage{
-		db: db,
-	}, err
+	// Read and execute migration file.
+	if buf, err := fs.ReadFile(migrationFS, name); err != nil {
+		return err
+	} else if _, err := tx.Exec(string(buf)); err != nil {
+		return err
+	}
+
+	// Insert record into migrations to prevent re-running migration.
+	if _, err := tx.Exec(`INSERT INTO migrations (name) VALUES (?)`, name); err != nil {
+		return err
+	}
+
+	return tx.Commit()
 }
 
 func (s *Storage) AddNetwork(n *Network) error {
-	stm, err := s.db.Prepare("INSERT INTO network(id, endpoint, seed, pubkey, route) VALUES(?, ?, ?, ?, ?)")
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	stm, err := s.db.Prepare("INSERT INTO network(id, endpoint, seed, pubkey, route, ifname) VALUES(?, ?, ?, ?, ?, ?)")
 	if err != nil {
 		return err
 	}
 	defer stm.Close()
 
-	r, err := stm.Exec(n.id, n.endpoint.String(), n.seed, n.pubkey[:], n.route)
+	r, err := stm.Exec(n.id, n.endpoint.String(), n.seed, n.pubkey[:], n.route, n.ifname)
 	if err != nil {
 		return err
 	}
@@ -137,11 +217,17 @@ func (s *Storage) AddNetwork(n *Network) error {
 		return fmt.Errorf("number of inserted rows: %d is not 1", num)
 	}
 
-	return nil
+	return tx.Commit()
 }
 
 func (s *Storage) RemoveNetwork(id string) error {
-	stm, err := s.db.Prepare("DELETE FROM network WHERE id = ?")
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	stm, err := tx.Prepare("DELETE FROM network WHERE id = ?")
 	if err != nil {
 		return err
 	}
@@ -160,11 +246,17 @@ func (s *Storage) RemoveNetwork(id string) error {
 		return fmt.Errorf("number of deleted rows: %d is not 1", num)
 	}
 
-	return nil
+	return tx.Commit()
 }
 
 func (s *Storage) GetNetwork(id string) (*Network, error) {
-	stmt, err := s.db.Prepare("SELECT id, endpoint, seed, pubkey, route FROM network WHERE id = ?")
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.Prepare("SELECT id, endpoint, seed, pubkey, route, ifname FROM network WHERE id = ?")
 	if err != nil {
 		return nil, err
 	}
@@ -174,7 +266,7 @@ func (s *Storage) GetNetwork(id string) (*Network, error) {
 	var endpoint string
 	var pubkey []byte
 
-	err = stmt.QueryRow(id).Scan(&n.id, &endpoint, &n.seed, &pubkey, &n.route)
+	err = stmt.QueryRow(id).Scan(&n.id, &endpoint, &n.seed, &pubkey, &n.route, &n.ifname)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -194,7 +286,13 @@ func (s *Storage) GetNetwork(id string) (*Network, error) {
 }
 
 func (s *Storage) AddClient(c *Client) error {
-	stm, err := s.db.Prepare("INSERT INTO client(id, network_id, ip, ifname) VALUES(?, ?, ?, ?)")
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	stm, err := tx.Prepare("INSERT INTO client(id, network_id, ip, ifname) VALUES(?, ?, ?, ?)")
 	if err != nil {
 		return err
 	}
@@ -213,11 +311,17 @@ func (s *Storage) AddClient(c *Client) error {
 		return fmt.Errorf("number of inserted rows: %d is not 1", num)
 	}
 
-	return nil
+	return tx.Commit()
 }
 
 func (s *Storage) RemoveClient(id string) error {
-	stm, err := s.db.Prepare("DELETE FROM client WHERE id = ?")
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	stm, err := tx.Prepare("DELETE FROM client WHERE id = ?")
 	if err != nil {
 		return err
 	}
@@ -236,7 +340,7 @@ func (s *Storage) RemoveClient(id string) error {
 		return fmt.Errorf("number of deleted rows: %d is not 1", num)
 	}
 
-	return nil
+	return tx.Commit()
 }
 
 func (s *Storage) GetClient(id string) (*Client, error) {
@@ -249,15 +353,21 @@ SELECT
 	network.endpoint,
 	network.seed,
 	network.pubkey,
-	network.route
+	network.route,
+	network.ifname
 FROM 
 	client 
 INNER JOIN network
 ON client.network_id = network.id
 WHERE client.id = ?
 `
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
 
-	stmt, err := s.db.Prepare(q)
+	stmt, err := tx.Prepare(q)
 	if err != nil {
 		return nil, err
 	}
@@ -268,7 +378,7 @@ WHERE client.id = ?
 	var endpoint string
 	var ip string
 	var pubkey []byte
-	err = stmt.QueryRow(id).Scan(&c.id, &c.network.id, &ip, &c.ifname, &endpoint, &c.network.seed, &pubkey, &c.network.route)
+	err = stmt.QueryRow(id).Scan(&c.id, &c.network.id, &ip, &c.ifname, &endpoint, &c.network.seed, &pubkey, &c.network.route, &c.network.ifname)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}

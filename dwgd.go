@@ -14,21 +14,21 @@ type Dwgd struct {
 }
 
 func NewDwgd(cfg *Config) (*Dwgd, error) {
-	driver, err := NewDriver(cfg.Db)
+	driver, err := NewDriver(cfg.Db, nil, nil)
 	if err != nil {
 		return nil, err
 	}
 
 	handler := network.NewHandler(driver)
 
-	listener, err := NewUnixListener()
+	listener, err := NewUnixListener(nil)
 	if err != nil {
 		return nil, err
 	}
 
 	var symlinker *RootlessSymlinker
 	if cfg.Rootless {
-		symlinker, err = NewRootlessSymlinker()
+		symlinker, err = NewRootlessSymlinker(nil)
 		if err != nil {
 			return nil, err
 		}
