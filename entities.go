@@ -15,12 +15,14 @@ import (
 )
 
 type Network struct {
-	id       string
-	endpoint *net.UDPAddr
-	seed     []byte
-	pubkey   wgtypes.Key
-	route    string
-	ifname   string
+	id         string
+	endpoint   *net.UDPAddr
+	seed       []byte
+	pubkey     wgtypes.Key
+	route      string
+	ifname     string
+	gateway    string
+	gateway_v6 string
 }
 
 func (n *Network) PeerConfig() wgtypes.PeerConfig {
@@ -198,13 +200,13 @@ func (s *Storage) AddNetwork(n *Network) error {
 	}
 	defer tx.Rollback()
 
-	stm, err := s.db.Prepare("INSERT INTO network(id, endpoint, seed, pubkey, route, ifname) VALUES(?, ?, ?, ?, ?, ?)")
+	stm, err := s.db.Prepare("INSERT INTO network(id, endpoint, seed, pubkey, route, ifname, gateway, gateway_v6) VALUES(?, ?, ?, ?, ?, ?, ?, ?)")
 	if err != nil {
 		return err
 	}
 	defer stm.Close()
 
-	r, err := stm.Exec(n.id, n.endpoint.String(), n.seed, n.pubkey[:], n.route, n.ifname)
+	r, err := stm.Exec(n.id, n.endpoint.String(), n.seed, n.pubkey[:], n.route, n.ifname, n.gateway, n.gateway_v6)
 	if err != nil {
 		return err
 	}
@@ -256,7 +258,7 @@ func (s *Storage) GetNetwork(id string) (*Network, error) {
 	}
 	defer tx.Rollback()
 
-	stmt, err := tx.Prepare("SELECT id, endpoint, seed, pubkey, route, ifname FROM network WHERE id = ?")
+	stmt, err := tx.Prepare("SELECT id, endpoint, seed, pubkey, route, ifname, gateway, gateway_v6 FROM network WHERE id = ?")
 	if err != nil {
 		return nil, err
 	}
@@ -266,7 +268,7 @@ func (s *Storage) GetNetwork(id string) (*Network, error) {
 	var endpoint string
 	var pubkey []byte
 
-	err = stmt.QueryRow(id).Scan(&n.id, &endpoint, &n.seed, &pubkey, &n.route, &n.ifname)
+	err = stmt.QueryRow(id).Scan(&n.id, &endpoint, &n.seed, &pubkey, &n.route, &n.ifname, &n.gateway, &n.gateway_v6)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -354,7 +356,9 @@ SELECT
 	network.seed,
 	network.pubkey,
 	network.route,
-	network.ifname
+	network.ifname,
+	network.gateway,
+	network.gateway_v6
 FROM 
 	client 
 INNER JOIN network
@@ -378,7 +382,7 @@ WHERE client.id = ?
 	var endpoint string
 	var ip string
 	var pubkey []byte
-	err = stmt.QueryRow(id).Scan(&c.id, &c.network.id, &ip, &c.ifname, &endpoint, &c.network.seed, &pubkey, &c.network.route, &c.network.ifname)
+	err = stmt.QueryRow(id).Scan(&c.id, &c.network.id, &ip, &c.ifname, &endpoint, &c.network.seed, &pubkey, &c.network.route, &c.network.ifname, &c.network.gateway, &c.network.gateway_v6)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}

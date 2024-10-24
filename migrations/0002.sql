@@ -1,0 +1,2 @@
+ALTER TABLE network ADD COLUMN gateway TEXT;
+ALTER TABLE network ADD COLUMN gateway_v6 TEXT;

@@ -131,6 +131,22 @@ func (d *Driver) CreateNetwork(r *network.CreateNetworkRequest) error {
 	}
 	n.route = route
 
+	if len(r.IPv4Data) > 0 {
+		TraceLog.Printf("ParseCIDR: %+v\n", r.IPv4Data[0].Gateway)
+		gateway, _, err := net.ParseCIDR(r.IPv4Data[0].Gateway)
+		if err == nil && gateway != nil {
+			TraceLog.Printf("n.gateway: %+v\n", gateway)
+			n.gateway = gateway.String()
+		}
+	}
+
+	if len(r.IPv6Data) > 0 {
+		gateway_v6, _, err := net.ParseCIDR(r.IPv6Data[0].Gateway)
+		if err == nil && gateway_v6 != nil {
+			n.gateway_v6 = gateway_v6.String()
+		}
+	}
+
 	n.id = r.NetworkID
 	return d.s.AddNetwork(n)
 }
@@ -265,14 +281,18 @@ func (d *Driver) Join(r *network.JoinRequest) (*network.JoinResponse, error) {
 		})
 	}
 
-	return &network.JoinResponse{
+	resp := network.JoinResponse{
 		InterfaceName: network.InterfaceName{
 			SrcName:   c.ifname,
 			DstPrefix: "wg",
 		},
 		StaticRoutes:          staticRoutes,
-		DisableGatewayService: true,
-	}, nil
+		DisableGatewayService: false,
+		Gateway: c.network.gateway,
+		GatewayIPv6: c.network.gateway_v6,
+	}
+	TraceLog.Printf("Join resp : [ %+v ]\n", resp)
+	return &resp, nil
 }
 
 func (d *Driver) Leave(r *network.LeaveRequest) error {
@@ -313,5 +333,15 @@ func (d *Driver) Leave(r *network.LeaveRequest) error {
 		}
 	}
 
+	return nil
+}
+
+func (d *Driver) ProgramExternalConnectivity(r *network.ProgramExternalConnectivityRequest) error {
+	TraceLog.Printf("ProgramExternalConnectivity(): [ %+v ]\n", r)
+	return nil
+}
+
+func (d *Driver) RevokeExternalConnectivity(r *network.RevokeExternalConnectivityRequest) error {
+	TraceLog.Printf("RevokeExternalConnectivity(): [ %+v ]\n", r)
 	return nil
 }
